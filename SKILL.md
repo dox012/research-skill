@@ -9,14 +9,26 @@ User topic: **$ARGUMENTS**
 
 This skill takes a topic and drives it through structured iteration. It's not a one-shot answer — it builds infrastructure and returns.
 
+## Default language: Chinese（中文）
+
+Unless the user writes in English or explicitly asks for English output:
+
+- Write `CLAUDE.md`, `lessons.md`, `research_log.md`, and `hypothesis.md` **in Chinese**.
+- Reply to the user in Chinese.
+- Code comments and filenames stay English (interoperability).
+- The user's topic string in `$ARGUMENTS` determines language: mostly-Chinese topic → Chinese everything; mostly-English topic → English everything; ambiguous → ask once at bootstrap.
+
+When a Chinese project has been bootstrapped, all future iterations keep Chinese even if the trigger prompt ("/loop …") happens to be English.
+
 ## Phase detection (do this FIRST)
 
-Detect which phase you're in by checking the current working directory:
+Detect which mode you're in:
 
-- **`state/manifest.json` exists** → ITERATION phase. Skip to "Iteration protocol" below. Do NOT re-bootstrap.
-- **`state/manifest.json` does not exist** → BOOTSTRAP phase. Run the bootstrap flow below first.
+- **`state/manifest.json` exists + user message is a `/loop` fire** → ITERATION phase (autonomous). Run the 10-step protocol.
+- **`state/manifest.json` exists + user is talking to you** → STEERING phase (human-in-the-loop). See "Steering" section below. Do NOT force a new iteration.
+- **`state/manifest.json` does not exist** → BOOTSTRAP phase. Run the bootstrap flow.
 
-If the user's topic clearly references continuing existing work ("继续攻 X", "再跑一轮") but no manifest exists, ask if they meant to `cd` to an existing research dir.
+If the user's topic references continuing existing work ("继续攻 X", "再跑一轮") but no manifest exists, ask if they meant to `cd` to an existing research dir.
 
 ## BOOTSTRAP phase
 
@@ -129,6 +141,48 @@ This is invoked each time `/loop` fires. Follow CLAUDE.md's 10 steps. Key discip
 - **One hypothesis per round**, explicit in `hypothesis.md` (single variable preferred; bundle only when a group of related vars is one conceptual change).
 - **Backup candidates** listed in advance — when the primary fails, you know where to go next instead of flailing.
 - **Failed rounds are data** — record as `✗` in the log; don't update best; add a Meta lesson if the failure revealed a methodological truth.
+
+## STEERING phase (user conversation between loops)
+
+When the user types something that is NOT a `/loop` firing and a research project exists, treat it as **steering** — they want to inspect, adjust, or redirect the ongoing research. Do not kick off a new iteration unless they explicitly ask.
+
+Steering operations you should recognize and handle:
+
+### 1. Inspect / query state
+- "当前进度？" / "progress?" → summarize `best/*.score.json` + last few `research_log.md` lines + current Phase
+- "最近一轮发生了什么？" → read last `hypothesis.md` + last log line + show the diff image
+- "哪个 target 最弱？" / "which target is hardest?" → read best scores, identify laggard
+- "show me lessons" → read `lessons.md` (or filter by category)
+- "给我看 iter N 的 diff" → load + display that iteration's diff artifact
+
+### 2. Adjust strategy / scope
+- "下一轮专注攻 X" → note override in a `state/next_override.json` or similar, ensure next `/loop` reads it
+- "暂停 target 002" → set `targets[<id>].active = false` in `manifest.json`
+- "把 gap 改成试 30 不是 20" → add to `lessons.md` as operator-supplied hint
+- "换个激进策略" → suggest 2–3 candidate hypotheses based on recent diff; wait for user pick
+- "跳过下一轮" → delete/skip ScheduleWakeup
+
+### 3. Edit state directly on user's instruction
+- "把这条 lesson 删了" → edit `lessons.md`, keep a one-line note in `research_log.md` about the removal
+- "重置 003 的 best" → offer to move current `best/003.*` to an archive path before nuking; confirm before destructive
+- "把 Phase 提到 2" → edit `manifest.json.phase` and record reason in `research_log.md`
+
+### 4. Control the loop itself
+- "停了" / "stop" → cancel pending wakeup, confirm loop is inactive
+- "再跑一轮" / "run now" → do NOT call the loop skill yourself; run the 10-step protocol once inline, then re-prompt them whether to resume `/loop`
+- "加快点" / "slow down" → adjust next `ScheduleWakeup` delaySeconds and tell them what you picked
+- "换到 15 分钟间隔" → update pacing preference in `manifest.json.pacing_preference` so future rounds respect it
+
+### 5. Research methodology questions
+- "怎么确认这条 lesson 是对的？" → propose a controlled experiment (one iter with the lesson applied vs disabled)
+- "我觉得这个方向没前途" → acknowledge, ask for alternative direction, list the 3 highest-leverage pivots based on current diff
+
+### Steering discipline
+
+- **Don't silently iterate during steering** — the user steering means they want a dialogue, not more rounds. If they ask you to run, run once, then stop.
+- **Write down steering decisions** — any change to state (strategy, scope, lessons edit) gets a one-line entry in `research_log.md` tagged `[steer]` so future rounds see the context.
+- **Confirm before destructive steering** — deleting iterations, nuking bests, changing manifest wholesale needs explicit "yes, do it" before the edit.
+- **Resume cleanly** — when the user says "好 继续 /loop"，verify `state/` is coherent and the last wakeup still makes sense; if pacing changed, reschedule with the new value.
 
 ## Pacing rules (for ScheduleWakeup)
 
