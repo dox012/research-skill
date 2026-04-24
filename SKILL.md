@@ -1,222 +1,222 @@
 ---
 name: research
-description: Bootstrap + drive a long-term self-improving research project on any topic that has a measurable success metric. Creates a project directory, builds measurement/evaluation infrastructure, runs iterative loops that accumulate lessons across rounds, and integrates with /loop for autonomous progress. Use when the user wants to "research X", "improve X until near-perfect", "keep trying X and learn" — anything where rounds of hypothesis→attempt→score→lesson are productive.
+description: 在任何有可量化指标的主题上，启动并驱动一个长期自主研究项目。建立项目目录和评测基建，跑"假设→尝试→打分→教训"循环，跨轮累积 lessons，并集成 /loop 自主推进。适用于"研究 X"、"把 X 改到近完美"、"持续尝试 X 并学习"——任何通过 hypothesis→attempt→score→lesson 循环能有效推进的场景。 | Bootstrap and drive a long-term self-improving research project on any topic with a measurable success metric. Builds measurement infrastructure, runs hypothesis→attempt→score→lesson cycles, integrates with /loop for autonomous progress.
 ---
 
-# /research — long-term self-improving research skill
+# /research — 长期自主研究 skill
 
-User topic: **$ARGUMENTS**
+用户主题：**$ARGUMENTS**
 
-This skill takes a topic and drives it through structured iteration. It's not a one-shot answer — it builds infrastructure and returns.
+这个 skill 接收一个主题，用结构化迭代推进它。不是一次性回答——它搭基建，然后把研究交给循环。
 
-## Default language: Chinese（中文）
+## 默认语言：中文
 
-Unless the user writes in English or explicitly asks for English output:
+除非用户用英文写，或明确要求英文输出：
 
-- Write `CLAUDE.md`, `lessons.md`, `research_log.md`, and `hypothesis.md` **in Chinese**.
-- Reply to the user in Chinese.
-- Code comments and filenames stay English (interoperability).
-- The user's topic string in `$ARGUMENTS` determines language: mostly-Chinese topic → Chinese everything; mostly-English topic → English everything; ambiguous → ask once at bootstrap.
+- `CLAUDE.md`、`lessons.md`、`research_log.md`、`hypothesis.md` 全部用**中文**
+- 回复用户用中文
+- 代码注释和文件名保持英文（互操作性）
+- `$ARGUMENTS` 语言决定默认：以中文为主 → 全中文；以英文为主 → 全英文；混杂时 bootstrap 问一次
+- 一旦一个中文项目 bootstrap 完成，后续所有迭代保持中文，即便触发 prompt（`/loop …`）恰好是英文
 
-When a Chinese project has been bootstrapped, all future iterations keep Chinese even if the trigger prompt ("/loop …") happens to be English.
+## 阶段识别（先做这一步）
 
-## Phase detection (do this FIRST)
+判断当前是哪种模式：
 
-Detect which mode you're in:
+- **`state/manifest.json` 存在 + 用户消息来自 `/loop` 触发** → ITERATION 阶段（自主），跑 10 步协议
+- **`state/manifest.json` 存在 + 用户在跟你对话** → STEERING 阶段（人机协同），见下面 "STEERING" 章节，**不要**自动启新一轮
+- **`state/manifest.json` 不存在** → BOOTSTRAP 阶段，走 bootstrap 流程
 
-- **`state/manifest.json` exists + user message is a `/loop` fire** → ITERATION phase (autonomous). Run the 10-step protocol.
-- **`state/manifest.json` exists + user is talking to you** → STEERING phase (human-in-the-loop). See "Steering" section below. Do NOT force a new iteration.
-- **`state/manifest.json` does not exist** → BOOTSTRAP phase. Run the bootstrap flow.
+如果用户主题提到"继续攻 X"、"再跑一轮"这种延续性措辞但没 manifest，问用户是否忘了 `cd` 到已有研究目录。
 
-If the user's topic references continuing existing work ("继续攻 X", "再跑一轮") but no manifest exists, ask if they meant to `cd` to an existing research dir.
+## BOOTSTRAP 阶段
 
-## BOOTSTRAP phase
+非平凡任务——除非主题极其狭窄（单个快速问题），否则用 `EnterPlanMode`。Plan mode 让你先摸环境、问用户、对齐范围再搭架子。
 
-Non-trivial — use `EnterPlanMode` unless the topic is extremely narrow (single quick question). Plan mode lets you survey the environment, ask the user clarifying questions, and commit to a scope before scaffolding.
+### Step 1 — 确定研究范围（用 AskUserQuestion，2–3 个问题为限）
 
-### Step 1 — Scope the research (use AskUserQuestion; keep it to 2–3 questions)
+根据 `$ARGUMENTS` 里还不清楚的点，挑以下问：
 
-Ask the user about whichever of these are not already clear from `$ARGUMENTS`:
+1. **评测指标（success metric）**——打分函数是什么？例子：
+   - 数值型（像素匹配、SSIM、BLEU、准确率）
+   - 比较型（另一个模型 / 人类对 A vs B 裁判）
+   - 二元里程碑（"这个 test 过了吗"）
+   - 定性 + rubric
+   
+   选**一个**主指标 + 可选次指标。用户不确定时基于主题提议一个让他们确认。
 
-1. **Success metric** — what's the scoring function? Examples:
-   - Numerical (pixel match, SSIM, BLEU, accuracy %)
-   - Comparison-based (A vs B judgment by another model / human)
-   - Binary milestone ("did this test pass")
-   - Qualitative with rubric
-   Pick ONE primary + optional secondaries. If the user is unsure, propose one based on the topic and confirm.
+2. **Target 与 Attempt 形态**——每轮输入什么、输出什么？
+   - Target：参考 / 输入是什么？（一张图、一个 prompt、一个 codebase、一个 benchmark 集）
+   - Attempt：Claude 每轮产出什么？（HTML、Python 代码、文本、通过别的工具生成的图）
+   - 如何把 attempt 转成分数？（渲染 + diff、跑测试、人工、LLM judge）
 
-2. **Target & attempt shapes** — what goes in, what comes out each iteration?
-   - Target: what's the input/reference? (an image, a prompt, a codebase, a benchmark set)
-   - Attempt: what does Claude produce each round? (HTML, Python code, text, an image via another tool)
-   - How is the attempt turned into a score? (render + diff, run tests, human eval, LLM judge)
+3. **时间尺度**——单会话 / 多天 / 无限；单 target 还是多 target。
 
-3. **Horizon & scale** — single session / multi-day / indefinite; one target or many.
+任何答案会显著影响基建决策的都要问。其它用默认值往前走。
 
-If any answer would change infrastructure decisions significantly, ask. Otherwise commit defaults and move on.
+### Step 2 — 扫既有工具
 
-### Step 2 — Survey existing tools
+搭任何东西前，先看父项目有没有已有工具（评测、打分、渲染、数据）。用 Glob/Grep/Explore 搜：
 
-Before building anything, check if the parent project already has relevant utilities (measurement, scoring, rendering, data). Search with Glob/Grep/Explore for:
+- 评测脚本（`evaluate.py`、`score.py`、`eval/*`）
+- 渲染 / 产物生成工具（`render.py`、`screenshot.py`、推理 harness）
+- 参考数据集
+- 既有 `.claude/` 记忆或 `CLAUDE.md` 提示的约定
 
-- Evaluation scripts (`evaluate.py`, `score.py`, `eval/*`)
-- Rendering/producing utilities (`render.py`, `screenshot.py`, inference harness)
-- Reference datasets
-- Any prior `.claude/` memory or `CLAUDE.md` that hints at conventions
+**复用优于重写**。如果有可用的打分器就 import；没有才写最小可用版本。
 
-**Reuse over rewrite**. If a reasonable scorer already exists, import it. If not, write the minimum viable one.
+### Step 3 — 搭项目骨架
 
-### Step 3 — Scaffold the project
-
-Create this structure (adapt names to the topic — `attempt.html` → `attempt.py` if the domain is codegen, etc.):
+创建以下结构（按主题调整名字——codegen 就把 `attempt.html` 改成 `attempt.py` 等）：
 
 ```
 <project-dir>/
-  CLAUDE.md                    # the living research protocol (this skill's output)
+  CLAUDE.md                    # 活的研究协议（这个 skill 的输出）
   tools/
-    produce.py                 # target → attempt (optional, may be Claude-direct)
+    produce.py                 # target → attempt（可选，也可能由 Claude 直接产）
     score.py                   # target + attempt → score.json
-    select_next.py             # pick next target+iter_n from manifest (laggard-priority)
-    measure.py                 # domain probe (optional but recommended)
+    select_next.py             # 从 manifest 挑下一个 target+iter_n（laggard 优先）
+    measure.py                 # 领域探测工具（可选但推荐）
   targets/<id>/
-    target.<ext>               # the input/reference
+    target.<ext>               # 输入 / 参考
     meta.json                  # {id, source, difficulty, notes}
   iterations/<id>/<NNN>/
-    hypothesis.md              # what this round tests and why
-    attempt.<ext>              # this round's produced artifact
-    score.json                 # full metrics
-    diff.<ext>                 # visual or structured diff (if applicable)
-    [extra artifacts]
+    hypothesis.md              # 本轮测什么、为什么
+    attempt.<ext>              # 本轮产物
+    score.json                 # 完整指标
+    diff.<ext>                 # 视觉或结构化 diff（如适用）
+    [其它产物]
   state/
     manifest.json              # {phase, targets[], rotation[], rotation_idx, counters, last_improved, plateau_window}
-    best/<id>.<ext>            # current best attempt per target
+    best/<id>.<ext>            # 每个 target 的当前最佳
     best/<id>.score.json
-    lessons.md                 # categorized, evolving guidelines
-    research_log.md            # narrative timeline (★ breakthrough, ✗ failed hypothesis)
+    lessons.md                 # 分类的、演化的规则
+    research_log.md            # 叙事时间线（★ 突破、✗ 假设失败）
 ```
 
-Key files:
+关键文件：
 
-- `state/lessons.md` — start with empty categorized skeleton: Layout/Content, Metrics, Tools, Meta, plus topic-specific categories. One rule per bullet: **rule → why → how to apply → when it was learned**.
+- `state/lessons.md`——从空的分类骨架开始：Layout/Content、Metrics、Tools、Meta，加上主题相关分类。每条一行：**规则 → 为什么 → 怎么用 → 什么时候学到**。
 
-- `state/research_log.md` — start with a bootstrap entry. Format per line: `YYYY-MM-DD HH:MM | tgt=XXX it=NNN score=X.XX Δ=±X.XX [★|✗] | one-line change description`.
+- `state/research_log.md`——从 bootstrap 条目起。每行格式：`YYYY-MM-DD HH:MM | tgt=XXX it=NNN score=X.XX Δ=±X.XX [★|✗|steer] | 一句话改动`
 
-- `CLAUDE.md` — the per-round protocol. See template below.
+- `CLAUDE.md`——每轮协议。见下方模板。
 
-- `state/manifest.json` — `{"phase": 0, "targets": [...], "rotation": [...], "rotation_idx": 0, "counters": {...}, "last_improved": {...}, "plateau_window": 5}`.
+- `state/manifest.json`——`{"phase": 0, "targets": [...], "rotation": [...], "rotation_idx": 0, "counters": {...}, "last_improved": {...}, "plateau_window": 5}`
 
-### Step 4 — Write CLAUDE.md (the 10-step iteration protocol)
+### Step 4 — 写 CLAUDE.md（10 步迭代协议）
 
-The body of CLAUDE.md is the iteration protocol the user will invoke via `/loop`. Adapt to topic but keep these 10 steps:
+CLAUDE.md 的正文是用户通过 `/loop` 调用的迭代协议。按主题调整，保留这 10 步：
 
-1. **Orient** — read manifest, current lessons (category-relevant only), prior hypothesis + diff
-2. **Select** — `python tools/select_next.py` returns `(target_id, iteration_number)` with laggard priority
-3. **Study** — read target, current best attempt, last diff visually
-4. **Hypothesize** — write `hypothesis.md` with: baseline score, observation, falsifiable prediction, backup candidates, expected Δ
-5. **Generate** — produce `attempt.<ext>` based on `best.<ext>` (not from zero)
-6. **Evaluate** — run the pipeline: produce → score
-7. **Judge** — cheating check (if applicable), Δ vs best, promote or keep
-8. **Record** — append one line to `research_log.md`; update `lessons.md` only when a *generalizable, falsifiable* new insight emerges
-9. **Stop/continue** — update `best/` if improved, update `last_improved` in manifest
-10. **Self-pace** — call ScheduleWakeup with a delay informed by outcome (see pacing rules below)
+1. **Orient**——读 manifest、当前 lessons（只读分类相关的）、上轮 hypothesis + diff
+2. **Select**——`python tools/select_next.py` 返回 `(target_id, iteration_number)`，laggard 优先
+3. **Study**——看 target、当前 best、上轮 diff 视觉
+4. **Hypothesize**——写 `hypothesis.md`：基线分、观察、可证伪预测、备用候选、预期 Δ
+5. **Generate**——基于 `best.<ext>` 改出 `attempt.<ext>`（不是从零重写）
+6. **Evaluate**——跑流水线：produce → score
+7. **Judge**——反作弊（如适用）、对比 best 的 Δ、升级或保持
+8. **Record**——`research_log.md` 追加一行；只在获得**可推广、可证伪**的新洞见时更新 `lessons.md`
+9. **Stop/continue**——分数严格优于 best 才更新 `best/`，同步 manifest 的 `last_improved`
+10. **Self-pace**——按结果调用 ScheduleWakeup（见下方节奏规则）
 
-### Step 5 — Seed initial targets
+### Step 5 — 播种初始 targets
 
-Depending on horizon, pick 1–3 targets to start. For single-target work, start with the easiest case; for multi-target, pick across a difficulty spectrum. Let the user redirect.
+按时间尺度挑 1–3 个起步。单 target 从最容易的开始；多 target 挑跨难度区间的。让用户可调整。
 
-### Step 6 — Smoke test
+### Step 6 — 烟测
 
-Before handing off to /loop:
-- Run the pipeline end-to-end once on target 001 with a trivial attempt to verify produce + score + diff all work
-- Verify anti-cheat (if applicable — e.g., submitting the target itself as attempt should score 0 or flag cheating)
-- Check that `state/` gets updated
+交给 /loop 之前：
+- 用一个 trivial attempt 跑一轮端到端流水线，验证 produce + score + diff 都 OK
+- 验证反作弊（如适用，比如把 target 本身当 attempt 提交应该打零分或被标记作弊）
+- 确认 `state/` 被正确更新
 
-### Step 7 — Hand off to /loop
+### Step 7 — 交接给 /loop
 
-Tell the user: `/loop 按 CLAUDE.md 的 10 步协议推进一轮 <topic> 研究` (or localize to their language). Don't auto-start — let them confirm.
+告诉用户：`/loop 按 CLAUDE.md 的 10 步协议推进一轮 <topic> 研究`（本地化到他们的语言）。**不要**自动启动——让他们确认。
 
-## ITERATION phase (single round)
+## ITERATION 阶段（单轮）
 
-This is invoked each time `/loop` fires. Follow CLAUDE.md's 10 steps. Key discipline:
+每次 `/loop` 触发。按 CLAUDE.md 的 10 步执行。关键纪律：
 
-- **One hypothesis per round**, explicit in `hypothesis.md` (single variable preferred; bundle only when a group of related vars is one conceptual change).
-- **Backup candidates** listed in advance — when the primary fails, you know where to go next instead of flailing.
-- **Failed rounds are data** — record as `✗` in the log; don't update best; add a Meta lesson if the failure revealed a methodological truth.
+- **每轮一个假设**，明确写在 `hypothesis.md`（首选单变量；只在一组相关变量是**一个概念性改动**时才打包）
+- **提前列备选候选**——主要假设失败时有方向可切，不至于乱试
+- **失败轮也是数据**——log 标 `✗`，不更新 best；如果失败暴露了方法论真相，记一条 Meta lesson
 
-## STEERING phase (user conversation between loops)
+## STEERING 阶段（loop 之间的用户对话）
 
-When the user types something that is NOT a `/loop` firing and a research project exists, treat it as **steering** — they want to inspect, adjust, or redirect the ongoing research. Do not kick off a new iteration unless they explicitly ask.
+当用户发的消息不是 `/loop` 触发、而且研究项目已存在，把它当成 **steering**——他们想检视、调整、重定向正在进行的研究。**不要**自动启新一轮，除非他们明确要求。
 
-Steering operations you should recognize and handle:
+Steering 操作识别与处理：
 
-### 1. Inspect / query state
-- "当前进度？" / "progress?" → summarize `best/*.score.json` + last few `research_log.md` lines + current Phase
-- "最近一轮发生了什么？" → read last `hypothesis.md` + last log line + show the diff image
-- "哪个 target 最弱？" / "which target is hardest?" → read best scores, identify laggard
-- "show me lessons" → read `lessons.md` (or filter by category)
-- "给我看 iter N 的 diff" → load + display that iteration's diff artifact
+### 1. 查看 / 检视状态
+- "当前进度？" / "progress?" → 汇总 `best/*.score.json` + 最近几行 `research_log.md` + 当前 Phase
+- "最近一轮做了什么？" → 读上轮 `hypothesis.md` + log 行 + 显示 diff 图
+- "哪个 target 最弱？" / "which target is hardest?" → 读 best 分数，识别 laggard
+- "给我看 lessons" → 读 `lessons.md`（可按分类筛）
+- "给我看 iter N 的 diff" → 加载并显示那一轮的 diff 产物
 
-### 2. Adjust strategy / scope
-- "下一轮专注攻 X" → note override in a `state/next_override.json` or similar, ensure next `/loop` reads it
-- "暂停 target 002" → set `targets[<id>].active = false` in `manifest.json`
-- "把 gap 改成试 30 不是 20" → add to `lessons.md` as operator-supplied hint
-- "换个激进策略" → suggest 2–3 candidate hypotheses based on recent diff; wait for user pick
-- "跳过下一轮" → delete/skip ScheduleWakeup
+### 2. 调整策略 / 范围
+- "下一轮专注攻 X" → 写 override 到 `state/next_override.json` 之类，确保下次 `/loop` 读到
+- "暂停 target 002" → `manifest.json` 里把它 `targets[<id>].active = false`
+- "gap 改成试 30 不是 20" → 作为操作员提示加到 `lessons.md`
+- "换个激进策略" → 基于最近 diff 提 2–3 个候选假设，等用户选
+- "跳过下一轮" → 取消 / 跳过 ScheduleWakeup
 
-### 3. Edit state directly on user's instruction
-- "把这条 lesson 删了" → edit `lessons.md`, keep a one-line note in `research_log.md` about the removal
-- "重置 003 的 best" → offer to move current `best/003.*` to an archive path before nuking; confirm before destructive
-- "把 Phase 提到 2" → edit `manifest.json.phase` and record reason in `research_log.md`
+### 3. 按用户指示直接编辑状态
+- "把这条 lesson 删了" → 编辑 `lessons.md`，在 `research_log.md` 留一行删除注记
+- "重置 003 的 best" → 先把 `best/003.*` 归档再覆盖；**破坏性操作前先确认**
+- "Phase 提到 2" → 编辑 `manifest.json.phase`，在 `research_log.md` 记理由
 
-### 4. Control the loop itself
-- "停了" / "stop" → cancel pending wakeup, confirm loop is inactive
-- "再跑一轮" / "run now" → do NOT call the loop skill yourself; run the 10-step protocol once inline, then re-prompt them whether to resume `/loop`
-- "加快点" / "slow down" → adjust next `ScheduleWakeup` delaySeconds and tell them what you picked
-- "换到 15 分钟间隔" → update pacing preference in `manifest.json.pacing_preference` so future rounds respect it
+### 4. 控制 loop 本身
+- "停了" / "stop" → 取消排队的 wakeup，确认 loop 已停
+- "现在跑一轮" / "run now" → **不要**自己调 loop skill；内联跑一次 10 步协议，跑完问用户是否恢复 `/loop`
+- "加快点" / "慢一点" → 调整下次 `ScheduleWakeup` 的 delaySeconds 并告诉用户选了多少
+- "换到 15 分钟间隔" → 把节奏偏好存入 `manifest.json.pacing_preference`，后续轮次尊重
 
-### 5. Research methodology questions
-- "怎么确认这条 lesson 是对的？" → propose a controlled experiment (one iter with the lesson applied vs disabled)
-- "我觉得这个方向没前途" → acknowledge, ask for alternative direction, list the 3 highest-leverage pivots based on current diff
+### 5. 研究方法论问题
+- "怎么确认这条 lesson 是对的？" → 提议受控实验（开 / 关对比，各一轮）
+- "这个方向没前途" → 承认，询问替代方向，基于当前 diff 列 3 个高杠杆的转向候选
 
-### Steering discipline
+### Steering 纪律
 
-- **Don't silently iterate during steering** — the user steering means they want a dialogue, not more rounds. If they ask you to run, run once, then stop.
-- **Write down steering decisions** — any change to state (strategy, scope, lessons edit) gets a one-line entry in `research_log.md` tagged `[steer]` so future rounds see the context.
-- **Confirm before destructive steering** — deleting iterations, nuking bests, changing manifest wholesale needs explicit "yes, do it" before the edit.
-- **Resume cleanly** — when the user says "好 继续 /loop"，verify `state/` is coherent and the last wakeup still makes sense; if pacing changed, reschedule with the new value.
+- **Steering 期间不要静默迭代**——用户在 steering 是想对话，不是多跑几轮。叫跑就跑一次，跑完停
+- **把 steering 决策写下来**——任何 state 改动（策略、范围、lessons 编辑）都在 `research_log.md` 加一行 `[steer]` 标签，让未来轮次看到上下文
+- **破坏性 steering 先确认**——删迭代、清 best、整改 manifest 需要明确 "yes, do it" 才编辑
+- **干净恢复 /loop**——用户说"好，继续 /loop"时，先验证 `state/` 一致性、上次排的 wakeup 是否还有意义；pacing 改过就按新值重排
 
-## Pacing rules (for ScheduleWakeup)
+## 节奏规则（ScheduleWakeup 用）
 
-- Default: `delaySeconds = 1800` (30 min) — enough to think, within cache if rounds are under 5 min of work.
-- Breakthrough (`Δ > +0.02` or topic-equivalent "big win"): `900–1200s` (15–20 min) to strike while insight is fresh.
-- Plateau (`3 rounds of Δ ≈ 0 or < 0`): extend to `2400s` (40 min). Use the extra time to construct a *categorically different* hypothesis (change tactic, not just change value).
-- Don't go below 900s — that's reflexive code-slinging, not research.
-- Don't schedule if the user said stop, or if the primary goal is met.
+- 默认：`delaySeconds = 1800`（30 min）——够思考，且单轮 < 5 min 工作时在 cache 窗内
+- 突破（`Δ > +0.02` 或主题等价的"大胜"）：`900–1200s`（15–20 min），趁热打铁
+- Plateau（`连续 3 轮 Δ ≈ 0 或 < 0`）：拉长到 `2400s`（40 min）。多出的时间用来构造**类别不同**的新假设（换战术，不是换数值）
+- 不低于 900s——再低就变反射式写代码，不是研究了
+- 用户说停、或主目标已达，就不排
 
-## Reverse-plateau strategies
+## 反 plateau 策略
 
-When stuck, cycle through these in order:
+卡住时按顺序循环：
 
-1. **Measure harder** — write or extend `measure.py` to extract exact positions/values from target instead of eyeballing. Most plateaus are "I don't know what target actually looks like".
-2. **Check for infrastructure errors** — is the scoring tool right? Is the rendering pipeline matching the target's pipeline? (In UI recon this surfaced: wrong viewport, missing scrollbar, wrong scale factor.)
-3. **Find the dominant residual** — compute per-row / per-region / per-class diff; identify which specific slice contributes most. Attack that, not "general improvement".
-4. **Test your own lessons** — a lesson can be wrong. Re-derive it from target data.
-5. **Swap coupling model** — if you're using flex/implicit layout, switch to explicit (absolute, fixed size). Explicit is easier to reason about in iteration.
-6. **Shrink step size** — 20px moves can overshoot; try 5px. Big-step moves that help look obvious; small-step moves that help are rarer.
-7. **Radical rewrite** — once per every ~20 rounds, rewrite one block from scratch using current lessons. Accumulated micro-edits can trap you in a local optimum.
-8. **Activate next-phase capability** — if permitted (external assets, auxiliary model call, human judge), flip on the capability you've been saving.
+1. **Measure harder**——写或扩展 `measure.py`，从 target 直接抽真值而非肉眼估。大多数 plateau 都是"我其实不知道 target 长什么样"
+2. **Check for infrastructure errors**——打分工具对吗？渲染流水线与 target 流水线匹配吗？（UI 重建中这暴露过：viewport 错、缺 scrollbar、scale 因子错）
+3. **Find the dominant residual**——算 per-row / per-region / per-class diff，找出最大贡献切片，攻它，不是"整体优化"
+4. **Test your own lessons**——lesson 可能是错的。从 target 数据重新验证
+5. **Swap coupling model**——在用 flex / 隐式布局？换显式（absolute、固定尺寸）。显式更好推理
+6. **Shrink step size**——20px 移动会过冲；试 5px。大步长立竿见影，小步长里的改进反而稀有
+7. **Radical rewrite**——每 ~20 轮一次，用当前 lessons 把某个块从零重写。微编辑累积会困在局部最优
+8. **Activate next-phase capability**——允许的话（外部素材、辅助模型调用、人工裁判），打开一直留着的能力
 
-## Anti-patterns to avoid
+## 反 pattern
 
-- **Running without a hypothesis** — every round needs something falsifiable written down before the attempt.
-- **Updating best on ties** — only strictly-better scores promote; ties keep best stable.
-- **Lessons as narrative** — lessons.md is for *rules*, not stories. Stories go in research_log.md.
-- **Deleting failed iterations** — they're the training data. Keep the directory.
-- **Silent infrastructure changes** — if you change `tools/score.py` or `render.py`, rebaseline all bests and write a Hotfix section in research_log.md.
+- **不写假设就跑**——每轮都得先落一份可证伪的东西在 `hypothesis.md`
+- **分数打平也升 best**——只有严格大于才升；打平保持 best 稳定
+- **Lessons 写成叙事**——`lessons.md` 是**规则**，不是故事。故事进 `research_log.md`
+- **删失败迭代**——那是训练数据，目录留着
+- **静悄悄改基建**——改 `tools/score.py` 或 `render.py` 要把所有 best 重新打分，`research_log.md` 加 `## Hotfix` 段
 
-## Output contract (what to return to the user)
+## 输出约定（给用户的返回）
 
-After bootstrap: a short summary of the project layout, initial targets picked, smoke-test result, and the /loop command to start.
+Bootstrap 之后：项目布局简述、初始挑的 target、烟测结果、启动 /loop 的命令。
 
-After each iteration: a table of {metric: before, after, Δ, ★|✗}, one-sentence diagnosis, next wakeup time.
+每轮迭代后：{指标：before, after, Δ, ★|✗} 表、一句话诊断、下次 wakeup 时间。
 
-After N rounds or when asked: a progress roll-up showing per-target scores vs initial, top 3 lessons learned, remaining bottlenecks.
+N 轮后或用户询问时：进度 roll-up——每 target 分数 vs 起始、top 3 lessons、剩余瓶颈。
