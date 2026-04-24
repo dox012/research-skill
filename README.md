@@ -21,15 +21,7 @@ Don't use it for:
 
 - One-off questions or narrow fixes (just ask Claude directly)
 - Problems with no evaluation signal (you can't tell if you're getting better)
-- Tasks where rounds don't share a state (e.g., independent bug fixes)
-
-Example prompts:
-
-```
-/research reconstruct this UI screenshot into HTML/CSS at pixel-level
-/research tune my RAG pipeline to beat 0.85 on the eval set
-/research improve this code generator until it passes the full test suite
-```
+- Tasks where rounds don't share state (e.g., independent bug fixes)
 
 ---
 
@@ -77,7 +69,7 @@ When stuck, Claude cycles through these in order:
 3. **Find the dominant residual** — which specific region/row/class contributes most? Attack that, not "general improvement"
 4. **Test your own lessons** — a lesson may be wrong; re-derive from data
 5. **Swap coupling model** — flex → absolute, implicit sizing → explicit
-6. **Shrink step size** — 20px moves overshoot; try 5px
+6. **Shrink step size** — large moves overshoot; try smaller ones
 7. **Radical rewrite** — every ~20 rounds, redo one block from scratch using current lessons
 8. **Activate next-phase capability** — flip on something you'd been saving (external assets, judge model, human eval)
 
@@ -114,7 +106,7 @@ your-project/
 ### What `lessons.md` and `research_log.md` are *for*
 
 - **`research_log.md`** is the *timeline*. One line per round, parseable format:
-  `YYYY-MM-DD HH:MM | tgt=XXX it=NNN t5=X.XX Δ=±X.XX [★|✗] | one-line change`
+  `YYYY-MM-DD HH:MM | tgt=XXX it=NNN score=X.XX Δ=±X.XX [★|✗] | one-line change`
 - **`lessons.md`** is the *rulebook*. Each entry is one categorized rule: the rule itself, *why* it's true, *how to apply*, and *when it was learned*. Not stories, not narratives. If a later round refutes a rule, you **edit it in place** — lessons evolve.
 
 Keeping stories out of `lessons.md` is critical: Claude reads it every round and needs high-signal rules, not logs.
@@ -142,57 +134,19 @@ Verify by typing `/` in Claude Code — you should see `research` in the list.
 ## Quickstart
 
 ```
-cd ~/projects/ui-reconstruction        # or wherever you want the project
-/research reconstruct UI screenshots into HTML/CSS at pixel level
+cd ~/projects/your-research-project
+/research <your topic>
 ```
 
 Claude will:
 
-1. Enter plan mode, ask 2–3 questions about metric / target format / scale
+1. Enter plan mode, ask 2–3 questions about metric / target format / horizon
 2. Survey your parent project for reusable evaluation code
 3. Scaffold `tools/`, `targets/`, `iterations/`, `state/`, and a tailored `CLAUDE.md`
 4. Run one smoke test to verify the pipeline works
-5. Hand off:
-   > Start with: `/loop 按 CLAUDE.md 的 10 步协议推进一轮 <topic> 研究`
+5. Hand off — you then start `/loop` to iterate autonomously
 
-From then on, `/loop` keeps the research moving autonomously.
-
----
-
-## Case study: UI pixel reconstruction
-
-Real progression from our dogfood project: three GitHub/Baidu/Google screenshots, targeting pixel-level HTML/CSS reconstruction (`pixel_match_t5 ≥ 0.99`).
-
-### Results (9 iterations on target 003, GitHub)
-
-| Iter | t5     | SSIM  | Δ         | What changed                                                          |
-| ---- | ------ | ----- | --------- | --------------------------------------------------------------------- |
-| 001  | 0.746  | 0.663 | baseline  | First attempt at 1912×922 scale                                       |
-| 002  | 0.729  | 0.664 | **-0.017** ✗ | Batch anchor re-positioning (20px shifts) — **overshot**              |
-| 003  | 0.746  | 0.661 | -0.001 ✗  | Banner top 5px — too small a signal to matter                         |
-| 004  | 0.753  | 0.672 | **+0.007** ★ | Banner strict `height: 82px` instead of padding-driven                |
-| 005  | 0.754  | 0.672 | +0.001 ★  | Infrastructure fix: render.py now paints Windows scrollbar           |
-| 006  | 0.754  | 0.672 | +0.0001   | Banner text color → GitHub default (not custom warning brown)         |
-| 007  | 0.759  | 0.682 | **+0.0045** ★ | README block shifted +28px (pixel-sampled vs eyeballed)              |
-| 008  | 0.778  | 0.685 | **+0.019** ★★ | Callout: removed `#ddf4ff` blue bg, matched GitHub quote style       |
-| 009  | 0.778  | 0.684 | ~0 ✗      | rdm top pullback — symmetric displacement, net zero                   |
-
-### Key meta-lessons recorded
-
-From `lessons.md` — verbatim categorized rules Claude accumulated:
-
-- **visual similarity ≠ pixel match** — 20px shifts can make things look more similar while scoring *worse* (because approximate overlap creates more "near-miss" pixels than complete misalignment). Use ≤5px single-step moves.
-- **flex margin is a coupling variable** — changing one `margin-bottom` moves every downstream sibling. For position tuning, use `position: absolute` anchors instead.
-- **padding-driven heights drift** — `padding + text-content` lets font metrics decide final height. Explicit `height: Npx + align-items: center` is 10× more predictable. (+0.007 single-variable test.)
-- **lessons can be wrong** — a lesson written from a failed experiment may have the wrong root cause. Re-verify when a later round contradicts it.
-- **target.png may include Windows scrollbar** — Playwright headless doesn't paint one; the 17px stripe at `x=1895+` is pure noise unless you fix it in render.
-
-And discovered infrastructure bugs that a naive loop would have missed:
-
-- Targets were being 0.781× scaled down during init — real elements rendered at 1.28× their should-be size until `init_targets.py` and `render.py` both moved to native 1912×922.
-- Playwright omits the system scrollbar; our target screenshots include it. Added a post-process to paint a gray band.
-
-Neither of these would be fixable by trying harder. The protocol surfaces infrastructure bugs because every plateau triggers "check the pipeline itself".
+From then on, `/loop` keeps the research moving.
 
 ---
 
@@ -200,11 +154,11 @@ Neither of these would be fixable by trying harder. The protocol surfaces infras
 
 - **Infrastructure before iteration** — the first job of the skill is to write `score.py`, `measure.py`, and `select_next.py`. Without a reliable score, more rounds just add noise.
 - **State beats memory** — `lessons.md`, `research_log.md`, and `best/` persist between sessions. Claude's in-context "I remember" is irrelevant here.
-- **Hypothesis before attempt** — `hypothesis.md` is written *first*, and it must be falsifiable with an expected Δ. No hypothesis → no round.
-- **Failed rounds are data** — ✗ rounds stay on disk with their failed attempt and hypothesis. They constrain future rounds ("don't re-try what didn't work").
-- **Lessons are rules, not stories** — `lessons.md` entries read like rules in a playbook. Narrative goes elsewhere.
-- **Laggard priority** — rotation allocates attention to the weakest-scoring target when the gap exceeds 0.10. Prevents always optimizing the easy ones.
-- **One hypothesis per round** — single variable preferred. Bundles OK only when a group of changes is one conceptual shift (e.g., "re-anchor all y-positions together").
+- **Hypothesis before attempt** — `hypothesis.md` is written *first*, and must be falsifiable with an expected Δ. No hypothesis → no round.
+- **Failed rounds are data** — ✗ rounds stay on disk with their attempt and hypothesis. They constrain future rounds ("don't re-try what didn't work").
+- **Lessons are rules, not stories** — `lessons.md` entries read like entries in a playbook. Narrative goes in the log.
+- **Laggard priority** — rotation allocates attention to the weakest-scoring target when the gap is large. Prevents always optimizing the easy ones.
+- **One hypothesis per round** — single variable preferred. Bundles OK only when a group of changes is one conceptual shift.
 
 ---
 
@@ -212,14 +166,14 @@ Neither of these would be fixable by trying harder. The protocol surfaces infras
 
 - **Claude Code** with `/loop` skill available (bundled by default)
 - **A working directory** you want the research project in (`cd` there before invoking)
-- **Whatever domain-specific toolchain** your metric needs (Python + Pillow for images, a test runner for code, etc.) — the skill will detect and reuse what's installed
+- **Whatever domain-specific toolchain** your metric needs (Python + Pillow for images, a test runner for code, etc.) — the skill detects and reuses what's installed
 
 ---
 
 ## FAQ
 
 **Q: Will it keep running if I close Claude Code?**
-No — `/loop` is session-local. For truly persistent research, pair with `/schedule` (Anthropic cloud cron) or set up a wrapper that restarts Claude Code hourly.
+No — `/loop` is session-local. For truly persistent research, pair with `/schedule` (Anthropic cloud cron) or wrap Claude Code in a restart loop.
 
 **Q: Can I interrupt and redirect?**
 Yes. Hit Esc or just type instructions. Claude will read the current `state/` and fit your intent into the ongoing protocol.
@@ -227,20 +181,11 @@ Yes. Hit Esc or just type instructions. Claude will read the current `state/` an
 **Q: What if I want to change the metric mid-project?**
 Edit `tools/score.py` and document the change with a `## Hotfix` section in `research_log.md`. All existing bests should be re-scored so future rounds are comparable.
 
-**Q: How many rounds does it typically take?**
-Depends on the problem. In the UI recon case study, 9 rounds moved the hardest target from 0.746 → 0.778 (~4% absolute). Closing the last ~20% usually requires a Phase shift (e.g., introducing external assets, a judge model, etc.).
-
 **Q: Is there a cost control?**
-Each iteration is one Claude turn with image reads + CSS edits + one Bash call — typically cheap. Default 30-minute pacing gives ~2 iters/hour. Adjust by telling the loop `/loop 1h …` instead.
+Each iteration is one Claude turn with artifact reads + edits + a scoring call — typically cheap. Default 30-minute pacing gives ~2 iters/hour. Adjust by telling the loop `/loop 1h …` instead.
 
 ---
 
 ## License
 
 MIT. Use, fork, modify freely.
-
----
-
-## Credits
-
-Developed through dogfood on a UI pixel reconstruction research project in April 2026. Skill text is the distilled protocol; the meta-lessons in the case study are the real payload.
